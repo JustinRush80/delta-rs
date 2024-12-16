@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::fmt::{self, Display};
 use std::str::FromStr;
 
 use maplit::hashset;
@@ -177,7 +177,7 @@ impl Protocol {
         self
     }
 
-    /// Converts existing properties into features if the reader_version is >=3 or writer_version >=3
+    /// Converts existing properties into features if the reader_version is >=3 or writer_version >=7
     /// only converts features that are "true"
     pub fn move_table_properties_into_features(
         mut self,
@@ -212,7 +212,7 @@ impl Protocol {
                 None => self.writer_features = Some(converted_writer_features),
             }
         }
-        if self.min_reader_version > 3 {
+        if self.min_reader_version >= 3 {
             let converted_reader_features = configuration
                 .iter()
                 .filter(|(_, value)| {
@@ -726,9 +726,9 @@ impl AsRef<str> for StorageType {
     }
 }
 
-impl ToString for StorageType {
-    fn to_string(&self) -> String {
-        self.as_ref().into()
+impl Display for StorageType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_ref())
     }
 }
 
