@@ -51,7 +51,7 @@ impl DeltaFileSystemHandler {
             .with_storage_options(options.clone().unwrap_or_default())
             .build_storage()
             .map_err(PythonError::from)?
-            .object_store();
+            .object_store(None);
 
         Ok(Self {
             inner: storage,
@@ -71,11 +71,11 @@ impl DeltaFileSystemHandler {
         options: Option<HashMap<String, String>>,
         known_sizes: Option<HashMap<String, i64>>,
     ) -> PyResult<Self> {
-        let storage = table._table.object_store();
+        let storage = table.object_store()?;
         Ok(Self {
             inner: storage,
             config: FsConfig {
-                root_url: table._table.table_uri(),
+                root_url: table.with_table(|t| Ok(t.table_uri()))?,
                 options: options.unwrap_or_default(),
             },
             known_sizes,

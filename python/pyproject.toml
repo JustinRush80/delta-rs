@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = ["pyarrow>=16"]
+dynamic = ["version"]
 
 [project.optional-dependencies]
 pandas = ["pandas"]
@@ -37,6 +38,8 @@ devel = [
     "mypy==1.10.1",
     "ruff==0.5.2",
 ]
+polars = ["polars==1.17.1"]
+lakefs = ["lakefs==0.8.0"]
 pyspark = [
     "pyspark",
     "delta-spark",
@@ -92,6 +95,8 @@ markers = [
     "s3: marks tests as integration tests with S3 (deselect with '-m \"not s3\"')",
     "azure: marks tests as integration tests with Azure Blob Store",
     "pandas: marks tests that require pandas",
+    "polars: marks tests that require polars",
+    "lakefs: marks tests that require lakefs",
     "pyspark: marks tests that require pyspark",
 ]
 
