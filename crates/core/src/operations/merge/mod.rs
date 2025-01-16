@@ -887,7 +887,7 @@ async fn execute(
     if matches!(schema_mode, Some(SchemaMode::Merge)) {
         let merge_schema = merge_arrow_schema(
             snapshot.input_schema()?,
-            Arc::new(source_schema.as_arrow().clone()),
+            source_schema.inner().clone(),
             false,
         )?;
 
@@ -895,22 +895,22 @@ async fn execute(
 
         modify_schema(
             &mut schema_bulider,
-            &target_schema,
-            &source_schema,
+            target_schema,
+            source_schema,
             &match_operations,
         )?;
 
         modify_schema(
             &mut schema_bulider,
-            &target_schema,
-            &source_schema,
+            target_schema,
+            source_schema,
             &not_match_source_operations,
         )?;
 
         modify_schema(
             &mut schema_bulider,
-            &target_schema,
-            &source_schema,
+            target_schema,
+            source_schema,
             &not_match_target_operations,
         )?;
         let schema = Arc::new(schema_bulider.finish());
@@ -1437,9 +1437,13 @@ fn modify_schema(
     ending_schema: &mut SchemaBuilder,
     target_schema: &DFSchema,
     source_schema: &DFSchema,
-    operations: &Vec<MergeOperation>,
+    operations: &[MergeOperation],
 ) -> DeltaResult<()> {
-    for columns in operations.iter().map(|ops| ops.operations.keys()).flatten() {
+    for columns in operations
+        .iter()
+        .filter(|ops| matches!(ops.r#type, OperationType::Update | OperationType::Insert))
+        .flat_map(|ops| ops.operations.keys())
+    {
         if target_schema.field_from_column(columns).is_err() {
             let new_fields = source_schema.field_with_unqualified_name(columns.name())?;
             ending_schema.push(new_fields.to_owned().with_nullable(true));
@@ -1755,7 +1759,7 @@ mod tests {
             .with_schema_mode(SchemaMode::Merge)
             .when_matched_update(|update| {
                 update
-                    .update("value", col("source.value"))
+                    .update("value", col("source.value").add(lit(1)))
                     .update("modified", col("source.modified"))
                     .update("inserted_by", col("source.inserted_by"))
             })
@@ -1772,8 +1776,8 @@ mod tests {
             "| id | value | modified   | inserted_by |",
             "+----+-------+------------+-------------+",
             "| A  | 1     | 2021-02-01 |             |",
-            "| B  | 50    | 2021-02-02 | B1          |",
-            "| C  | 200   | 2023-07-04 | C1          |",
+            "| B  | 51    | 2021-02-02 | B1          |",
+            "| C  | 201   | 2023-07-04 | C1          |",
             "| D  | 100   | 2021-02-02 |             |",
             "+----+-------+------------+-------------+",
         ];
