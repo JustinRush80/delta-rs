@@ -859,7 +859,7 @@ async fn execute(
     let scan_config = DeltaScanConfigBuilder::default()
         .with_file_column(true)
         .with_parquet_pushdown(false)
-        .with_schema(snapshot.input_schema()?.clone())
+        .with_schema(snapshot.input_schema()?)
         .build(&snapshot)?;
 
     let target_provider = Arc::new(DeltaTableProvider::try_new(
@@ -991,13 +991,15 @@ async fn execute(
         )?;
         let schema = Arc::new(schema_bulider.finish());
         new_schema = Some(schema.clone());
-        let schema_action = Action::Metadata(Metadata::try_new(
-            schema.try_into()?,
-            current_metadata.partition_columns.clone(),
-            snapshot.metadata().configuration.clone(),
-        )?);
+        if schema != snapshot.input_schema()? {
+            let schema_action = Action::Metadata(Metadata::try_new(
+                schema.try_into()?,
+                current_metadata.partition_columns.clone(),
+                snapshot.metadata().configuration.clone(),
+            )?);
 
-        actions.push(schema_action);
+            actions.push(schema_action);
+        }
     }
 
     let matched = col(SOURCE_COLUMN)
@@ -1807,6 +1809,58 @@ mod tests {
             .unwrap()
             .await
             .unwrap();
+
+        let commit_info = table.history(None).await.unwrap();
+        let last_commit = &commit_info[0];
+        let parameters = last_commit.operation_parameters.clone().unwrap();
+        assert!(!parameters.contains_key("predicate"));
+        assert_eq!(parameters["mergePredicate"], json!("target.id = source.id"));
+        assert_eq!(
+            parameters["matchedPredicates"],
+            json!(r#"[{"actionType":"update"}]"#)
+        );
+        assert_eq!(
+            parameters["notMatchedPredicates"],
+            json!(r#"[{"actionType":"insert"}]"#)
+        );
+        assert_eq!(
+            parameters["notMatchedBySourcePredicates"],
+            json!(r#"[{"actionType":"update","predicate":"target.value = 1"}]"#)
+        );
+
+        assert_merge(table, metrics).await;
+    }
+    #[tokio::test]
+    async fn test_merge_with_schema_mode_but_no_change_schema() {
+        let (table, source) = setup().await;
+
+        let (table, metrics) = DeltaOps(table)
+            .merge(source, col("target.id").eq(col("source.id")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .with_schema_mode(SchemaMode::Merge)
+            .when_matched_update(|update| {
+                update
+                    .update("value", col("source.value"))
+                    .update("modified", col("source.modified"))
+            })
+            .unwrap()
+            .when_not_matched_by_source_update(|update| {
+                update
+                    .predicate(col("target.value").eq(lit(1)))
+                    .update("value", col("target.value") + lit(1))
+            })
+            .unwrap()
+            .when_not_matched_insert(|insert| {
+                insert
+                    .set("id", col("source.id"))
+                    .set("value", col("source.value"))
+                    .set("modified", col("source.modified"))
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(metrics.num_target_files_added, 2);
 
         let commit_info = table.history(None).await.unwrap();
         let last_commit = &commit_info[0];
