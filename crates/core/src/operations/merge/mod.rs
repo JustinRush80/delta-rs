@@ -779,7 +779,7 @@ async fn execute(
             if df
                 .clone()
                 .schema()
-                .field_with_unqualified_name(&col_name.to_string())
+                .field_with_unqualified_name(col_name)
                 .is_err()
             // implies it doesn't exist
             {
@@ -1283,12 +1283,12 @@ async fn execute(
         LogicalPlanBuilder::from(plan).project(fields)?.build()?
     };
 
-    let distrbute_expr = col(file_column.as_str());
+    let distribute_expr = col(file_column.as_str());
 
     let merge_barrier = LogicalPlan::Extension(Extension {
         node: Arc::new(MergeBarrier {
             input: new_columns.clone(),
-            expr: distrbute_expr,
+            expr: distribute_expr,
             file_column,
         }),
     });
