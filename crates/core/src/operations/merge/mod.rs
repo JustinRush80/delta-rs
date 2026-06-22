@@ -1050,6 +1050,8 @@ async fn execute(
         let merge_schema =
             merge_arrow_schema(logical_schema, source_schema.inner().clone(), false)?;
 
+        dbg!(&merge_schema);
+
         let mut schema_builder = SchemaBuilder::from(merge_schema.deref());
 
         modify_schema(
@@ -1084,6 +1086,8 @@ async fn execute(
             schema_action = Some(action);
         }
     }
+
+    dbg!(&new_schema);
 
     let matched = col(SOURCE_COLUMN)
         .is_true()
@@ -1727,10 +1731,20 @@ fn modify_schema(
         match target_schema.field_from_column(columns) {
             Ok(target_field) => {
                 // This case is when there is an added column in an nested datatype
-                let new_field = merge_arrow_field(target_field, source_field, true)?;
-                if new_field != **target_field {
-                    ending_schema.try_merge(&Arc::new(new_field))?;
-                }
+                dbg!(&target_field.is_nullable());
+                let new_field = merge_arrow_field(
+                    target_field,
+                    &Arc::new(
+                        source_field
+                            .as_ref()
+                            .clone()
+                            .with_nullable(target_field.is_nullable()),
+                    ),
+                    true,
+                )?;
+                dbg!(&new_field);
+
+                ending_schema.try_merge(&Arc::new(new_field))?;
             }
             Err(_) => {
                 // This function is called multiple time with different operations so this handle any collisions
@@ -3236,6 +3250,110 @@ mod tests {
         // Verify schema nullability is preserved after merge
         let schema = merged_table.snapshot().unwrap().schema();
         let final_fields: Vec<_> = schema.fields().collect();
+        assert!(
+            !final_fields[0].is_nullable(),
+            "id should remain non-nullable after merge"
+        );
+        assert!(
+            !final_fields[1].is_nullable(),
+            "value should remain non-nullable after merge"
+        );
+        assert!(
+            final_fields[2].is_nullable(),
+            "modified should remain nullable after merge"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_preserves_nullability_with_schema_merge() {
+        // Test that nullability constraints are preserved when merge_schema is True
+        let delta_schema = vec![
+            StructField::new(
+                "id".to_string(),
+                DataType::Primitive(PrimitiveType::String),
+                false, // non-nullable
+            ),
+            StructField::new(
+                "value".to_string(),
+                DataType::Primitive(PrimitiveType::Integer),
+                false, // non-nullable
+            ),
+            StructField::new(
+                "modified".to_string(),
+                DataType::Primitive(PrimitiveType::String),
+                true, // nullable
+            ),
+        ];
+
+        let table = DeltaTable::new_in_memory()
+            .create()
+            .with_save_mode(SaveMode::ErrorIfExists)
+            .with_columns(delta_schema)
+            .await
+            .unwrap();
+
+        // Verify initial schema nullability
+        let initial_fields: Vec<_> = table
+            .snapshot()
+            .unwrap()
+            .schema()
+            .fields()
+            .cloned()
+            .collect();
+        assert!(
+            !initial_fields[0].is_nullable(),
+            "id should be non-nullable"
+        );
+        assert!(
+            !initial_fields[1].is_nullable(),
+            "value should be non-nullable"
+        );
+        assert!(
+            initial_fields[2].is_nullable(),
+            "modified should be nullable"
+        );
+
+        // Source data with all nullable fields (typical from external sources)
+        let source_schema = Arc::new(ArrowSchema::new(vec![
+            Field::new("id", ArrowDataType::Utf8, true), // nullable in source
+            Field::new("value", ArrowDataType::Int32, true), // nullable in source
+            Field::new("modified", ArrowDataType::Utf8, true), // nullable in source
+        ]));
+
+        let ctx = SessionContext::new();
+        let batch = RecordBatch::try_new(
+            source_schema,
+            vec![
+                Arc::new(arrow::array::StringArray::from(vec![Some("A"), Some("B")])),
+                Arc::new(arrow::array::Int32Array::from(vec![Some(1), Some(2)])),
+                Arc::new(arrow::array::StringArray::from(vec![
+                    Some("2021-02-02"),
+                    None,
+                ])),
+            ],
+        )
+        .unwrap();
+        let source = ctx.read_batch(batch).unwrap();
+
+        let (merged_table, _) = table
+            .merge(source, col("target.id").eq(col("source.id")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .with_merge_schema(true)
+            .when_not_matched_insert(|insert| {
+                insert
+                    .set("id", col("source.id"))
+                    .set("value", col("source.value"))
+                    .set("modified", col("source.modified"))
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        // Verify schema nullability is preserved after merge
+        let schema = merged_table.snapshot().unwrap().schema();
+        let final_fields: Vec<_> = schema.fields().collect();
+        dbg!(&final_fields);
         assert!(
             !final_fields[0].is_nullable(),
             "id should remain non-nullable after merge"
